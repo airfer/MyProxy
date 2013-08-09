@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <string.h>
 #include <netdb.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -22,7 +23,7 @@ void daemonize (int servfd);
 void do_proxy (int usersockfd);
 void reap_status (void);
 void errorout (char *msg);
-void package_analysis(char* buf,int package_length);
+void package_analysis(char* buf,int* package_length);
 main (int argc,char* argv[])
 {
    int clilen;
@@ -161,10 +162,22 @@ void do_proxy (int usersockfd)
 	 int connstat;
 	 int iolen;
 	 char buf [2048];
-	      
+
+	/* struct sockaddr_in proxy_address;
+	 bzero((char *) &proxy_address, sizeof(proxy_address));
+	 proxy_address.sin_family = AF_INET;
+	 proxy_address.sin_addr.s_addr = htonl(INADDR_ANY);
+         proxy_address.sin_port = 9985;*/
+		  
 	 if ((isosockfd = socket(AF_INET,SOCK_STREAM,0)) < 0)
 		 errorout("failed to create socket to host");
-	       
+	                                                       
+	 /*if (bind(isosockfd,(struct sockaddr *) (&proxy_address),sizeof(proxy_address)) < 0) { 
+	        fputs("faild to bind proxy socket to specified port",stderr);
+	        exit(1);
+	 }*/
+
+
 	 connstat = connect(isosockfd,(struct sockaddr *) &hostaddr,sizeof(hostaddr));
 	 switch (connstat) {
 			  case 0:
@@ -194,7 +207,7 @@ void do_proxy (int usersockfd)
 			if (FD_ISSET(usersockfd,&rdfdset)) {
 				if ((iolen = read(usersockfd,buf,sizeof(buf))) <= 0)
 				           break;
-				           package_analysis(buf,iolen);
+				           package_analysis(buf,&iolen);
 					   write(isosockfd,buf,iolen);
 				}
 				     
@@ -226,24 +239,69 @@ void reap_status ()
 	 while ((pid = wait3(&status,WNOHANG,NULL)) > 0);
 }
 
-void package_analysis(char* buf, int package_length){
-	static int num=0;
-	char* start=buf;
-	if(num++==0){
-	    start=buf+36;
-	    printf("The user is: ");
-	    while(*start!='\0'){
-                  printf("%c",*start++);
+
+void package_analysis(char* buf, int* package_length){
+	static int log_flag=0;
+	printf("the package length is %d\n",*package_length);
+	if(log_flag==0){
+            char log_buffer[100];
+	    int uname_len=0;//user name length
+	    int pname_len=0;//processed name length
+	    int at_flage=0;
+	    memcpy(log_buffer,buf,*package_length);
+	    char* start=log_buffer;
+	    char* start_buf=buf;
+	    start=log_buffer+36;
+	    start_buf=buf+36;
+	    printf("***********The prefix of the user is**********\n");
+	    while(*start!='@'||at_flage!=1){
+		    printf("%c",*start);
+		    if(*start=='@')
+			    ++at_flage;
+		    ++start;
+		    ++uname_len;
+	    }
+	    ++uname_len;
+	    printf("%c\n",*start);
+	    printf("***********The new user name is **************\n");
+	    if(*start++=='@'){
+		    while(*start!='\0'){
+			    printf("%c",*start);
+			    *start_buf++=*start++;
+			    ++pname_len;
+		    }
+	    }
+	    printf("\n***********The passwd of the user is**********\n");
+            if(*start=='\0')
+	    {
+		    *start_buf++=*start++;//used to copy '\0'
+		    char* p_passwd;
+		    int i=0;
+		    ++pname_len;
+		    //printf("%x\n",*start);
+		    *start_buf++=*start++;
+		    p_passwd=start;
+		    char password;
+		    while(i<20){
+			    password=*start;
+			    printf("%x",password);
+			    *start_buf++=*start++;
+		    }
+
 	    }
 	    printf("\n");
-	    if(*start=='\0'){
-		    ++start;
-		    int i=0;
-		    printf("Password:");
-		    while(i++<20)
-			    printf("%c",*start);
-		    printf("\n");
-	    }
+	    /*to caluclate the new length of the package*/
+	    *package_length=*package_length-uname_len-4;
+	    
+	    printf("************The package_length is %d \n",*package_length);
+	    printf("************Package analysis end!****************\n");
+	    start_buf=buf;
+	    start_buf[0]=*package_length%256;
+	    start_buf[1]=(*package_length-start_buf[0])/256%256;
+	    start_buf[2]=(*package_length-start_buf[0]-start_buf[1]*256)/256/256%256;
+	    printf("start_buf[0]=%x,start_buf[1]=%d,start_buf[2]=%d\n",start_buf[0],start_buf[1],start[2]);
+	    *package_length+=4;
+	    log_flag=1;
 	}
 }
 
